@@ -20,20 +20,6 @@ namespace RandomIG
             InitializeComponent();
         }
 
-        //public double Evaluate(string expression)
-        //{
-        //    table.Columns.Add("expression", typeof(string), expression);
-        //    DataRow row = table.NewRow();
-
-        //    table.Rows.Add(row);
-
-        //    double d = double.Parse(Convert.ToString(row["expression"]));
-
-        //    table.Rows.Clear();
-        //    table.Columns.Clear();
-
-        //    return d;
-        //}
         Color[] bw = { Color.White, Color.Black };
 
         Color[] ran = { Color.Red, Color.Orange, Color.Yellow, Color.Green, Color.Blue, Color.Indigo, Color.Violet };
@@ -47,6 +33,10 @@ namespace RandomIG
             try
             {
                 eval(expression, Convert.ToInt32(textBox2.Text), Convert.ToInt32(textBox3.Text));
+                if (listBox1.Items.IndexOf(expression) == -1)
+                {
+                    listBox1.Items.Add(expression);
+                }
             }
             catch (Exception ex)
             {
@@ -55,120 +45,101 @@ namespace RandomIG
                 return;
             }
 
-            if (listBox1.Items.IndexOf(expression) == -1)
-            {
-                listBox1.Items.Add(expression);
-            }
-
         }
+
+        private bool verify(string name, string exp)
+        {
+            try
+            {
+                Bestcode.MathParser.MathParser s = new Bestcode.MathParser.MathParser();
+                s.Expression = exp;
+                s.Parse();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(string.Format("Error in '{0}' expression: {1}", name, ex.Message));
+                return false;
+            }
+        }
+
 
         private void eval(string exp, int h, int w)
         {
-            Color[] arr = checkBox1.Checked ? bw : ran;
 
-            bool use_prev = !(string.IsNullOrEmpty(textBox4.Text) | string.IsNullOrWhiteSpace(textBox4.Text));
+            bool use_prev = !(string.IsNullOrEmpty(textBox4.Text) || string.IsNullOrWhiteSpace(textBox4.Text));
 
-            Bestcode.MathParser.MathParser seedCombiner = null;
+            verify("Seed", textBox1.Text);
 
-            if (use_prev) 
+            if (use_prev)
             {
-                seedCombiner = new Bestcode.MathParser.MathParser();
-                seedCombiner.Expression = textBox4.Text;
-                try
-                {
-                    seedCombiner.Parse();
-                    seedCombiner.Optimize();
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show("Cannot parse PSeed expression: " + ex.Message);
-                    this.button1.Enabled = true;
-                    return;
-                }
+                verify("PSeed", textBox4.Text);
             }
 
+            List<ThreadWork> thread_state = new List<ThreadWork>();
 
-            Task.Factory.StartNew(() =>
+            int max_threads = Convert.ToInt32(textBox5.Text);
+            int active_threads = 0;
+
+            //int eachone_h = h / max_threads;
+            int eachone_w = w / max_threads;
+
+            int start_x = 0;
+            //int start_y = 0;
+
+            for (int i = 0; i < max_threads; i++)
             {
-                Bestcode.MathParser.MathParser mp = new Bestcode.MathParser.MathParser();
-                mp.Expression = exp;
 
-                try
+                ThreadWork tw = new ThreadWork(textBox1.Text, textBox4.Text)
                 {
-                    mp.Parse();
-                }
-                catch (Exception ex)
+                    UsePrev = use_prev,
+                    arr = checkBox1.Checked ? bw : ran,
+                    StartX = start_x,
+                    EndX = start_x + eachone_w,
+                    ImageHeight = h,
+                    ImageWidth = w
+                };
+
+
+                tw.FinishedEv += (aa) =>
                 {
-                    MessageBox.Show("Expression error: " + ex.Message);
-                    this.button1.Enabled = true;
-                    return;
-                }
-                mp.Parse();
-                mp.Optimize();
+                    // data.Add(new int[] { aa.StartX, 0 }, aa.Data);
 
-                Bitmap wb = new Bitmap(w, h);
-                FastBitmap fb = new FastBitmap(wb);
-                fb.LockImage();
+                    active_threads--;
 
-                double t = Convert.ToDouble(h);
-
-                int old_seed = 0;
-
-                for (int y = 0; y < h; y++)
-                {
-                    for (int x = 0; x < w; x++)
+                    this.Invoke((Action)delegate
                     {
-                        //Random rnd = new Random(Convert.ToInt32(Evaluate(expression.Replace("x", x.ToString()).Replace("y", y.ToString()))));
-                        mp.X = x;
-                        mp.Y = y;
-
-                        try
+                        using (Graphics g = Graphics.FromImage(this.pictureBox1.Image))
                         {
-                            int new_seed = Convert.ToInt32(mp.ValueAsDouble);
-
-                            Random rnd = null;
-
-                            if (use_prev)
-                            {
-                                seedCombiner.X = old_seed;
-                                seedCombiner.Y = new_seed;
-
-                                rnd = new Random(Convert.ToInt32(seedCombiner.ValueAsDouble));
-
-                                old_seed = new_seed;
-                            }
-                            else 
-                            {
-                                rnd = new Random(new_seed);
-                            }
-
-                            fb.SetPixel(x, y, arr[rnd.Next(arr.Length)]);
-                        }
-                        catch (Exception)
-                        {
-                            continue;
+                            g.DrawImageUnscaled(aa.Data, new Point(aa.StartX, 0));
+                            this.pictureBox1.Refresh();
+                            Application.DoEvents();
                         }
 
-                        Invoke((Action)delegate
+                        int finished = max_threads - active_threads;
+                        this.progressBar1.Value = Convert.ToInt32((double)finished / (double)max_threads * 100);
+
+                        if (active_threads <= 0)
                         {
-                            double c = Convert.ToDouble(y);
+                            this.button1.Enabled = true;
+                        }
+                    });
+                };
 
-                            this.progressBar1.Value = Convert.ToInt32((c / t) * 100.0);
-                        });
+                thread_state.Add(tw);
 
-                    }
-                }
+                start_x += eachone_w;
+            }
 
-                fb.UnlockImage();
+            Bitmap wb = new Bitmap(w, h);
+            this.pictureBox1.Image = wb;
 
-                Invoke((Action)delegate
-                {
-                    this.pictureBox1.Image = wb; this.button1.Enabled = true;
-                });
+            active_threads = thread_state.Count;
 
-            });
-
-            
+            foreach (ThreadWork t in thread_state)
+            {
+                t.Start();
+            }
         }
 
         private void listBox1_MouseDoubleClick(object sender, MouseEventArgs e)
@@ -205,9 +176,9 @@ namespace RandomIG
 
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
-            foreach (object item in listBox1.Items) 
+            foreach (object item in listBox1.Items)
             {
-                if (!Properties.Settings.Default.func.Contains(item.ToString())) 
+                if (!Properties.Settings.Default.func.Contains(item.ToString()))
                 {
                     Properties.Settings.Default.func.Add(item.ToString());
                 }
@@ -217,13 +188,13 @@ namespace RandomIG
 
         private void linkLabel1_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
-            using (SaveFileDialog sf = new SaveFileDialog()) 
+            using (SaveFileDialog sf = new SaveFileDialog())
             {
                 sf.Filter = "TEXT Files|*.txt";
-                if (sf.ShowDialog() == System.Windows.Forms.DialogResult.OK) 
+                if (sf.ShowDialog() == System.Windows.Forms.DialogResult.OK)
                 {
                     List<string> a = new List<string>();
-                    foreach (object item in listBox1.Items) 
+                    foreach (object item in listBox1.Items)
                     {
                         a.Add(item.ToString());
                     }
@@ -242,7 +213,7 @@ namespace RandomIG
                     List<string> a = new List<string>();
                     foreach (string item in System.IO.File.ReadAllLines(sf.FileName))
                     {
-                        if (listBox1.Items.IndexOf(item) == -1) 
+                        if (listBox1.Items.IndexOf(item) == -1)
                         {
                             listBox1.Items.Add(item);
                         }
@@ -260,6 +231,7 @@ namespace RandomIG
                     listBox1.Items.Add(item);
                 }
             }
+            this.textBox5.Text = Environment.ProcessorCount.ToString();
         }
 
     }
